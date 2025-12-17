@@ -14,7 +14,7 @@ class ProcessWatcher:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.processes: List[Dict] = []
-        self.running_processes: Dict[str, subprocess.Popen] = {}
+        self.running_processes: Dict[str, int] = {}
         self.stopped_processes: set = set()
         self.lock = threading.RLock()
         self.load_config()
@@ -77,8 +77,8 @@ class ProcessWatcher:
     def is_running(self, name: str) -> bool:
         # Check if we are tracking it internally
         if name in self.running_processes:
-            proc = self.running_processes[name]
-            if proc.poll() is None:
+            pid = self.running_processes[name]
+            if psutil.pid_exists(pid):
                 return True
             else:
                 del self.running_processes[name]
@@ -126,26 +126,50 @@ class ProcessWatcher:
                 cwd = config.get('cwd', '.')
                 cmd = config['command']
                 
-                kwargs = {}
-                if os.name == 'nt':
-                    # CREATE_NEW_PROCESS_GROUP (0x200) | DETACHED_PROCESS (0x08)
-                    kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008
+                pid = None
                 
-                proc = subprocess.Popen(
-                    cmd, 
-                    cwd=cwd, 
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,
-                    **kwargs
-                )
-                self.running_processes[name] = proc
+                if os.name == 'nt':
+                    # Use WMI to spawn process detached from everything (daemonize)
+                    # This breaks the Job Object chain completely
+                    
+                    # Construct command line
+                    full_cmd = subprocess.list2cmdline(cmd)
+                    
+                    # Escape for PowerShell
+                    full_cmd_ps = full_cmd.replace("'", "''")
+                    cwd_ps = cwd.replace("'", "''")
+                    
+                    ps_script = (
+                        f"$res = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList '{full_cmd_ps}', '{cwd_ps}'; "
+                        "if ($res.ReturnValue -eq 0) { $res.ProcessId } else { exit 1 }"
+                    )
+                    
+                    ps_cmd = ["powershell", "-NoProfile", "-Command", ps_script]
+                    
+                    # Run the launcher
+                    try:
+                        output = subprocess.check_output(ps_cmd, text=True).strip()
+                    except subprocess.CalledProcessError:
+                        logger.error(f"WMI failed to start process '{name}'")
+                        return False
+
+                    if output and output.isdigit():
+                        pid = int(output)
+                    else:
+                        logger.error(f"Failed to get PID from WMI launcher for '{name}'. Output: {output}")
+                        return False
+                else:
+                    # Fallback for non-Windows (standard Popen)
+                    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
+                    pid = proc.pid
+
+                self.running_processes[name] = pid
                 
                 if 'pid_file' in config:
                     with open(config['pid_file'], 'w') as f:
-                        f.write(str(proc.pid))
+                        f.write(str(pid))
                 
-                logger.info(f"Process '{name}' started with PID {proc.pid}")
+                logger.info(f"Process '{name}' started with PID {pid}")
                 return True
             except Exception as e:
                 logger.error(f"Failed to start process '{name}': {e}")
@@ -153,52 +177,44 @@ class ProcessWatcher:
 
     def stop_process(self, name: str) -> bool:
         with self.lock:
+            pid = None
+            
             # First check internal tracking
             if name in self.running_processes:
-                proc = self.running_processes[name]
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                pid = self.running_processes[name]
                 del self.running_processes[name]
-                self.stopped_processes.add(name)
-                logger.info(f"Process '{name}' stopped.")
-                return True
             
-            # If not tracked internally, try to find it and kill it
-            config = self.get_config_by_name(name)
-            if not config:
-                return False
-            
-            # Mark as stopped even if we haven't found the PID yet, 
-            # effectively disabling auto-restart for this process
             self.stopped_processes.add(name)
-
-            pid = None
-            if 'pid_file' in config:
-                pid = self.check_pid_file(config['pid_file'])
             
-            if pid is None and 'process_match' in config:
-                pid = self.find_process_by_match(config['process_match'], config.get('executable_path'))
+            # If not tracked internally, try to find it via config
+            if pid is None:
+                config = self.get_config_by_name(name)
+                if config:
+                     if 'pid_file' in config:
+                        pid = self.check_pid_file(config['pid_file'], config.get('process_match'), config.get('executable_path'))
+                     
+                     if pid is None and 'process_match' in config:
+                        pid = self.find_process_by_match(config['process_match'], config.get('executable_path'))
 
-            if pid is None and 'executable_path' in config and 'process_match' not in config:
-                pid = self.find_process_by_match(None, config['executable_path'])
+                     if pid is None and 'executable_path' in config and 'process_match' not in config:
+                        pid = self.find_process_by_match(None, config['executable_path'])
 
             if pid:
                 try:
                     p = psutil.Process(pid)
                     p.terminate()
-                    p.wait(timeout=5)
+                    try:
+                        p.wait(timeout=5)
+                    except psutil.TimeoutExpired:
+                        p.kill()
                     logger.info(f"Process '{name}' (PID {pid}) stopped.")
                     return True
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
-                    try:
-                        p.kill()
-                        return True
-                    except:
-                        logger.error(f"Failed to kill process '{name}' (PID {pid})")
-                        return False
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    logger.info(f"Process '{name}' (PID {pid}) was already gone.")
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to kill process '{name}' (PID {pid}): {e}")
+                    return False
             
             logger.info(f"Process '{name}' is not running.")
             return False
