@@ -257,3 +257,28 @@ class ProcessWatcher:
             else:
                 statuses[name] = "Stopped"
         return statuses
+
+    def run_command(self, name: str, command: List[str]) -> Dict[str, Any]:
+        config = self.get_config_by_name(name)
+        if not config:
+            return {"success": False, "output": f"Process '{name}' not found", "error": ""}
+
+        cwd = config.get('cwd', '.')
+        try:
+            logger.info(f"Running command {command} for '{name}' in {cwd}")
+            # Use typing.List for command type hint if needed, but List is imported
+            result = subprocess.run(
+                command, 
+                cwd=cwd, 
+                capture_output=True, 
+                text=True, 
+                check=False
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr
+            }
+        except Exception as e:
+            logger.error(f"Failed to run command for '{name}': {e}")
+            return {"success": False, "output": "", "error": str(e)}
