@@ -177,29 +177,39 @@ class ProcessWatcher:
 
     def stop_process(self, name: str) -> bool:
         with self.lock:
-            pid = None
+            pids_to_kill = set()
             
-            # First check internal tracking
+            # 1. Internal tracking
             if name in self.running_processes:
-                pid = self.running_processes[name]
+                pids_to_kill.add(self.running_processes[name])
                 del self.running_processes[name]
             
             self.stopped_processes.add(name)
             
-            # If not tracked internally, try to find it via config
-            if pid is None:
-                config = self.get_config_by_name(name)
-                if config:
-                     if 'pid_file' in config:
-                        pid = self.check_pid_file(config['pid_file'], config.get('process_match'), config.get('executable_path'))
-                     
-                     if pid is None and 'process_match' in config:
-                        pid = self.find_process_by_match(config['process_match'], config.get('executable_path'))
+            # 2. Config based lookup (PID file, match, etc)
+            # We check this even if we found an internal PID, because they might differ
+            # (e.g. wrapper process vs actual process in PID file)
+            config = self.get_config_by_name(name)
+            if config:
+                pid_from_lookup = None
+                if 'pid_file' in config:
+                    pid_from_lookup = self.check_pid_file(config['pid_file'], config.get('process_match'), config.get('executable_path'))
+                
+                if pid_from_lookup is None and 'process_match' in config:
+                    pid_from_lookup = self.find_process_by_match(config['process_match'], config.get('executable_path'))
 
-                     if pid is None and 'executable_path' in config and 'process_match' not in config:
-                        pid = self.find_process_by_match(None, config['executable_path'])
+                if pid_from_lookup is None and 'executable_path' in config and 'process_match' not in config:
+                    pid_from_lookup = self.find_process_by_match(None, config['executable_path'])
+                
+                if pid_from_lookup:
+                    pids_to_kill.add(pid_from_lookup)
 
-            if pid:
+            if not pids_to_kill:
+                logger.info(f"Process '{name}' is not running.")
+                return False
+
+            success = False
+            for pid in pids_to_kill:
                 try:
                     p = psutil.Process(pid)
                     p.terminate()
@@ -208,16 +218,14 @@ class ProcessWatcher:
                     except psutil.TimeoutExpired:
                         p.kill()
                     logger.info(f"Process '{name}' (PID {pid}) stopped.")
-                    return True
+                    success = True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     logger.info(f"Process '{name}' (PID {pid}) was already gone.")
-                    return True
+                    success = True
                 except Exception as e:
                     logger.error(f"Failed to kill process '{name}' (PID {pid}): {e}")
-                    return False
             
-            logger.info(f"Process '{name}' is not running.")
-            return False
+            return success
 
     def restart_process(self, name: str) -> bool:
         self.stop_process(name)
