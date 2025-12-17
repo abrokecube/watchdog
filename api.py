@@ -45,13 +45,26 @@ def restart_process(name: str):
 @app.post("/processes/{name}/git-pull")
 def git_pull(name: str):
     result = watcher.run_command(name, ["git", "pull"])
-    if result["success"]:
-        return {"name": name, "status": "success", "output": result["output"], "error": result["error"]}
-    else:
-        # We return 200 even on failure to run the command successfully (non-zero exit), 
-        # but with status error, so the client can see the stderr.
-        # Unless it's a system error (exception), which is also caught in run_command.
-        return {"name": name, "status": "error", "output": result["output"], "error": result["error"]}
+    
+    response = {
+        "name": name,
+        "status": "success" if result["success"] else "error",
+        "output": result["output"],
+        "error": result["error"]
+    }
+    
+    if result["success"] and "Already up to date" not in result["output"]:
+        log_result = watcher.run_command(name, ["git", "log", "-1", "--format=%H|%an|%s"])
+        if log_result["success"]:
+            parts = log_result["output"].strip().split('|', 2)
+            if len(parts) == 3:
+                response["latest_commit"] = {
+                    "hash": parts[0],
+                    "author": parts[1],
+                    "message": parts[2]
+                }
+                
+    return response
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
