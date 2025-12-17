@@ -15,6 +15,7 @@ class ProcessWatcher:
         self.config_path = config_path
         self.processes: List[Dict] = []
         self.running_processes: Dict[str, subprocess.Popen] = {}
+        self.stopped_processes: set = set()
         self.lock = threading.RLock()
         self.load_config()
 
@@ -111,6 +112,10 @@ class ProcessWatcher:
                 logger.info(f"Process '{name}' is already running.")
                 return True
 
+            # Remove from stopped set if we are manually starting it
+            if name in self.stopped_processes:
+                self.stopped_processes.remove(name)
+
             config = self.get_config_by_name(name)
             if not config:
                 logger.error(f"No configuration found for process '{name}'")
@@ -157,6 +162,7 @@ class ProcessWatcher:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                 del self.running_processes[name]
+                self.stopped_processes.add(name)
                 logger.info(f"Process '{name}' stopped.")
                 return True
             
@@ -165,6 +171,10 @@ class ProcessWatcher:
             if not config:
                 return False
             
+            # Mark as stopped even if we haven't found the PID yet, 
+            # effectively disabling auto-restart for this process
+            self.stopped_processes.add(name)
+
             pid = None
             if 'pid_file' in config:
                 pid = self.check_pid_file(config['pid_file'])
@@ -204,6 +214,9 @@ class ProcessWatcher:
             with self.lock:
                 for p_config in self.processes:
                     name = p_config['name']
+                    if name in self.stopped_processes:
+                        continue
+                        
                     if not self.is_running(name):
                         logger.warning(f"Process '{name}' is down. Restarting...")
                         self.start_process(name)
@@ -213,5 +226,10 @@ class ProcessWatcher:
         statuses = {}
         for p in self.processes:
             name = p['name']
-            statuses[name] = "Running" if self.is_running(name) else "Stopped"
+            if self.is_running(name):
+                statuses[name] = "Running"
+            elif name in self.stopped_processes:
+                statuses[name] = "Stopped (Manual)"
+            else:
+                statuses[name] = "Stopped"
         return statuses
