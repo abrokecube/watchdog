@@ -123,9 +123,17 @@ class ProcessWatcher:
                 
                 kwargs = {}
                 if os.name == 'nt':
-                    kwargs['creationflags'] = subprocess.CREATE_NEW_CONSOLE
+                    # CREATE_NEW_PROCESS_GROUP (0x200) | DETACHED_PROCESS (0x08)
+                    kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008
                 
-                proc = subprocess.Popen(cmd, cwd=cwd, **kwargs)
+                proc = subprocess.Popen(
+                    cmd, 
+                    cwd=cwd, 
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    **kwargs
+                )
                 self.running_processes[name] = proc
                 
                 if 'pid_file' in config:
