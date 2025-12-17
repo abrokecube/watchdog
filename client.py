@@ -3,7 +3,7 @@ import asyncio
 from typing import Dict, Any
 
 class ProcessWatcherClient:
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8110"):
         self.base_url = base_url.rstrip('/')
 
     async def get_processes(self) -> Dict[str, str]:
