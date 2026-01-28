@@ -1,0 +1,20 @@
+[
+    {
+        "name": "test",
+        "command": [
+            "X:\\overlay.exe"
+        ],
+        "cwd": "X:\\",
+        "process_match": "overlay.exe"
+    },
+    {
+        "name": "test2",
+        "command": [
+            "pwsh",
+            "-File",
+            "./run.ps1"
+        ],
+        "cwd": "C:\\Users\\borkedcube\\Documents\\Python Projects\\borkedstream-server",
+        "pid_file": "C:\\Users\\borkedcube\\Documents\\Python Projects\\borkedstream-server\\pid"
+    }
+]
