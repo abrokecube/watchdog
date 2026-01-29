@@ -41,6 +41,24 @@ Process Watcher is a lightweight and flexible tool for monitoring and managing s
 
 1.  Create a `config.json` file in the root directory of the project. You can copy and modify `config_example.json`.
 
+3.  Environment variables: The project supports loading configuration from a `.env` file. Copy `.env.example` to `.env` and edit the values (for example `SERVER_HOST` and `SERVER_PORT`). Example commands:
+
+    -  Windows PowerShell:
+
+    ```powershell
+    copy .env.example .env
+    notepad .env
+    ```
+
+    -  Unix / macOS:
+
+    ```bash
+    cp .env.example .env
+    nano .env
+    ```
+
+    The `.env` variables will be used by the server (they can override defaults).
+
 2.  The `config.json` is a list of process objects to monitor. Here's an example configuration:
 
     ```json
