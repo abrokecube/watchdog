@@ -8,6 +8,7 @@
         "process_match": "overlay.exe"
     },
     {
+        "enabled": false,
         "name": "test2",
         "command": [
             "pwsh",
