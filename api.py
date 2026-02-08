@@ -66,5 +66,10 @@ def git_pull(name: str):
                 
     return response
 
+@app.post("/config/reload")
+def reload_config():
+    watcher.load_config()
+    return {"status": "success", "message": "Configuration reloaded"}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

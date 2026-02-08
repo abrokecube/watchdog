@@ -26,7 +26,10 @@ class ProcessWatcher:
 
         try:
             with open(self.config_path, 'r') as f:
-                self.processes = json.load(f)
+                new_config = json.load(f)
+            
+            with self.lock:
+                self.processes = new_config
             logger.info("Configuration loaded.")
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding JSON config: {e}")
@@ -238,6 +241,9 @@ class ProcessWatcher:
             with self.lock:
                 for p_config in self.processes:
                     name = p_config['name']
+                    if not p_config.get('enabled', True):
+                        continue
+
                     if name in self.stopped_processes:
                         continue
                         
